@@ -1,46 +1,12 @@
-from dspy import GEPA
-from evaluations.business_filter import evaluation_metric, metric_with_feedback
+from typing import Any, Dict
+
 import dspy
-from setup import CONFIG
-from dataloaders.business_filter import train_set, eval_set, inscope, outscope
-import os
-import sys
-import json
-import warnings
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from typing import List, Dict, Any, Tuple, Optional
-import time
-from datetime import datetime
-import re
-from pathlib import Path
-from dataclasses import dataclass
-from enum import Enum
+from dspy import GEPA
+from mlflow.genai import load_prompt
 
-from mlflow.genai import register_prompt, load_prompt, optimize_prompt
-from mlflow.genai.optimize import OptimizerConfig, LLMParams
-from mlflow.genai.scorers import scorer
-
-# Suppress warnings for cleaner output
-warnings.filterwarnings("ignore")
-
-print("📊 Setting up the business filter prediction pipeline...")
-
-
-print("📥 Loading the latest prompt from MLflow...")
-prompt_from_mlflow = load_prompt((f"prompts:/{CONFIG['PROMPT_NAME']}@latest"))
-print(
-    f"✅ Loaded prompt version {prompt_from_mlflow.version}"
-)
-print("=" * 60)
-print(prompt_from_mlflow.template)
-print("=" * 60)
-print()
+from config import CONFIG
+from dataloaders.business_filter import get_scope_description, load_and_prepare_data
+from evaluations.business_filter import evaluation_metric, make_metric_with_feedback
 
 
 class BusinessFilterSignature(dspy.Signature):
@@ -57,7 +23,7 @@ class BusinessFilterSignature(dspy.Signature):
 
 
 class BusinessFilter(dspy.Module):
-    def __init__(self):
+    def __init__(self, instructions: str, inscope: str, outscope: str):
         self.lm = dspy.LM(**CONFIG["MODEL_CONFIG"])
         self.teacher_lm = dspy.LM(**CONFIG["TEACHER_MODEL_CONFIG"])
         dspy.configure(lm=self.lm)
@@ -66,7 +32,7 @@ class BusinessFilter(dspy.Module):
         self.outscope = outscope
 
         self.signature = BusinessFilterSignature.with_instructions(
-            prompt_from_mlflow.template)
+            instructions)
         self.filter = dspy.Predict(self.signature)
 
     def forward(self, question: str) -> Dict[str, Any]:
@@ -77,59 +43,46 @@ class BusinessFilter(dspy.Module):
         )
 
 
-business_filter = BusinessFilter()
-print("✅ Business filter pipeline is ready")
-print()
-print("🤖 Running a sample prediction...")
-
-prediction = business_filter(
-    question="Chín tám Chị ờ có gọi lên tổng đài để nhờ đổi cái mật khẩu bên em ấy Mật khẩu Ipay thì ờ đổi như thế nào nhở"
-)
-
-print(prediction)
-print("=" * 60)
-print()
+def build_business_filter() -> BusinessFilter:
+    """Load the latest registered prompt and the scope text into a program."""
+    prompt = load_prompt(f"prompts:/{CONFIG['PROMPT_NAME']}@latest")
+    print(f"✅ Loaded prompt version {prompt.version}")
+    _, inscope, outscope = get_scope_description(CONFIG["CATEGORY"].lower())
+    return BusinessFilter(prompt.template, inscope, outscope)
 
 
-print("🏆 Run baseline evaluation...")
-evaluate = dspy.Evaluate(
-    devset=eval_set,
-    metric=evaluation_metric,
-    lm=dspy.LM(**CONFIG["JUDGE_MODEL_CONFIG"]),
-    display_progress=True,
-    # display_table=5
-)
+def evaluate_baseline():
+    business_filter = build_business_filter()
+    _, eval_set = load_and_prepare_data()
 
-results = evaluate(business_filter)
-
-# print("=" * 60)
-# print()
-
-# =============================================================================
-# OPTIMIZATION
-# =============================================================================
+    evaluate = dspy.Evaluate(
+        devset=eval_set,
+        metric=evaluation_metric,
+        lm=dspy.LM(**CONFIG["JUDGE_MODEL_CONFIG"]),
+        display_progress=True,
+    )
+    return evaluate(business_filter)
 
 
-# print("🚀 Starting prompt optimization...")
+def optimize():
+    business_filter = build_business_filter()
+    train_set, eval_set = load_and_prepare_data()
 
+    optimizer = GEPA(
+        metric=make_metric_with_feedback(
+            business_filter.inscope, business_filter.outscope),
+        auto="light",
+        num_threads=32,
+        track_stats=True,
+        reflection_minibatch_size=3,
+        reflection_lm=business_filter.teacher_lm
+    )
+    optimized_program = optimizer.compile(
+        business_filter,
+        trainset=train_set,
+        valset=eval_set,
+    )
 
-# teacher_lm = dspy.LM(**CONFIG["TEACHER_MODEL_CONFIG"])
-
-# optimizer = GEPA(
-#     metric=metric_with_feedback,
-#     auto="light",
-#     num_threads=32,
-#     track_stats=True,
-#     reflection_minibatch_size=3,
-#     reflection_lm=teacher_lm
-# )
-
-# optimized_program = optimizer.compile(
-#     business_filter,
-#     trainset=train_set,
-#     valset=eval_set,
-# )
-
-# optimized_program.save(f"{CONFIG['OUTPUT_DIR'] / CONFIG['PROMPT_NAME']}.json")
-# print("✅ Optimization completed")
-# print()
+    out_path = CONFIG['OUTPUT_DIR'] / f"{CONFIG['PROMPT_NAME']}.json"
+    optimized_program.save(str(out_path))
+    print(f"✅ Optimization completed, saved to {out_path}")

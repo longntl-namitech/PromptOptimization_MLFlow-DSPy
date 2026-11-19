@@ -2,8 +2,7 @@
 import dspy
 from dspy.teleprompt.gepa.gepa_utils import ScoreWithFeedback
 from loguru import logger
-from setup import CONFIG
-from dataloaders.business_filter import inscope, outscope
+from config import CONFIG
 
 logger.remove()  # Removes all configured sinks
 
@@ -40,12 +39,8 @@ class LLMFeedbackSignature(dspy.Signature):
 
 
 class LLMFeedback(dspy.Module):
-    def __init__(
-        self
-    ):
-        # init LLM
+    def __init__(self, inscope: str, outscope: str):
         self.lm = dspy.LM(**CONFIG["JUDGE_MODEL_CONFIG"])
-        dspy.configure(lm=self.lm)
         self.inscope = inscope
         self.outscope = outscope
         self.signature = LLMFeedbackSignature.with_instructions(
@@ -54,72 +49,55 @@ class LLMFeedback(dspy.Module):
         self.evaluator = dspy.Predict(self.signature)
 
     def forward(self, question: str, ground_truth: str, reasoning: str, prediction: str):
-        return self.evaluator(
-            inscope=self.inscope,
-            outscope=self.outscope,
-            question=question,
-            ground_truth=ground_truth,
-            reasoning=reasoning,
-            prediction=prediction
-        )
+        # Scoped so the judge LM does not replace the globally configured student LM
+        with dspy.context(lm=self.lm):
+            return self.evaluator(
+                inscope=self.inscope,
+                outscope=self.outscope,
+                question=question,
+                ground_truth=ground_truth,
+                reasoning=reasoning,
+                prediction=prediction
+            )
 
 
-llm_feedback = LLMFeedback()
+def make_metric_with_feedback(inscope: str, outscope: str):
+    """Build the GEPA metric; the judge sees the same scope text as the program."""
+    llm_feedback = LLMFeedback(inscope, outscope)
 
+    def metric_with_feedback(example, prediction, trace=None, pred_name=None, pred_trace=None):
+        correct_answer = example.in_scope
+        try:
+            llm_answer = prediction.in_scope
+        except ValueError as e:
+            feedback_text = f" The final answer must be a valid boolean (true/false) and nothing else. You responded with '{prediction.in_scope}', which couldn't be parsed as a boolean. Please ensure your answer is a valid boolean without any additional text or formatting."
 
-def metric_with_feedback(example, prediction, trace=None, pred_name=None, pred_trace=None):
-    correct_answer = example.in_scope
-    try:
-        llm_answer = prediction.in_scope
-    except ValueError as e:
-        # feedback_text = f"The final answer must be a valid integer and nothing else. You responded with '{prediction.answer}', which couldn't be parsed as a python integer. Please ensure your answer is a valid integer without any additional text or formatting."
-        feedback_text = f" The final answer must be a valid boolean (true/false) and nothing else. You responded with '{prediction.in_scope}', which couldn't be parsed as a boolean. Please ensure your answer is a valid boolean without any additional text or formatting."
+            return ScoreWithFeedback(
+                score=0,
+                feedback=feedback_text
+            )
+
+        score = int(correct_answer == llm_answer)
+
+        ground_truth = "in scope" if example.in_scope else "out of scope"
+        predicted = "in scope" if llm_answer else "out of scope"
+
+        feedback_text = ""
+        if score == 1:
+            feedback_text = f"Your in_scope is correct. The correct answer is '{ground_truth}'."
+        else:
+            feedback_prediction = llm_feedback(
+                question=example.question,
+                ground_truth=ground_truth,
+                reasoning=prediction.reason,
+                prediction=predicted
+            )
+
+            feedback_text = feedback_prediction.feedback
 
         return ScoreWithFeedback(
-            score=0,
+            score=score,
             feedback=feedback_text
         )
 
-    score = int(correct_answer == llm_answer)
-
-    ground_truth = "in scope" if example.in_scope else "out of scope"
-    predicted = "in scope" if llm_answer else "out of scope"
-
-    feedback_text = ""
-    if score == 1:
-        feedback_text = f"Your in_scope is correct. The correct answer is '{ground_truth}'."
-    else:
-        feedback_prediction = llm_feedback(
-            question=example.question,
-            ground_truth=ground_truth,
-            reasoning=prediction.reason,
-            prediction=predicted
-        )
-
-        feedback_text = feedback_prediction.feedback
-
-    return ScoreWithFeedback(
-        score=score,
-        feedback=feedback_text
-    )
-
-# response = await agent(question=train_set[0].question)
-
-# print("=" * 20 + " Question " + "=" * 20)
-# print(train_set[0].question)
-# print()
-# print("=" * 20 + " Ground Truth " + "=" * 20)
-# print(train_set[0].answer)
-# print()
-# print("=" * 20 + " Reasoning " + "=" * 20)
-# print(response.reasoning)
-# print("=" * 20 + " Generated Answer " + "=" * 20)
-# print(response.answer)
-# print()
-
-# evaluate(
-#     question=train_set[0].question,
-#     ground_truth=train_set[0].answer,
-#     reasoning=response.reasoning,
-#     generated_answer=response.answer
-# )
+    return metric_with_feedback

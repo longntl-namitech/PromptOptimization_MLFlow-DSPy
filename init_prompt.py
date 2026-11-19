@@ -1,4 +1,3 @@
-from setup import CONFIG
 from mlflow.genai import register_prompt
 
 business_filter_base_prompt = """You are a system scope validation assistant. Your task is to determine whether the user's question falls within the defined system boundaries. Follow these steps strictly:
@@ -13,25 +12,22 @@ PROMPTS = {
     "business_filter_payment_account": business_filter_base_prompt
 }
 
-print("📚 Registering prompt to MLflow...")
-registered_prompts = []
 
-for prompt_name, template in PROMPTS.items():
-    try:
-        prompt_version = register_prompt(
-            name=prompt_name,
-            template=template,
-            commit_message=prompt_name
-        )
-        registered_prompts.append({
-            "version": prompt_version.version,
-            "description": prompt_name,
-            "template": template
-        })
-        print(f"✅ Registered v{prompt_version.version}: {prompt_name}")
-    except Exception as e:
-        print(f"❌ Failed to register {prompt_name}: {e}")
+def register_prompts():
+    """Register every prompt in PROMPTS to the MLflow prompt registry."""
+    print("📚 Registering prompt to MLflow...")
+    registered = 0
 
-print(f"✅ Registered {len(registered_prompts)} prompts")
-print("=" * 60)
-print()
+    for prompt_name, template in PROMPTS.items():
+        try:
+            prompt_version = register_prompt(
+                name=prompt_name,
+                template=template,
+                commit_message=prompt_name
+            )
+            registered += 1
+            print(f"✅ Registered v{prompt_version.version}: {prompt_name}")
+        except Exception as e:
+            print(f"❌ Failed to register {prompt_name}: {e}")
+
+    print(f"✅ Registered {registered} prompts")
