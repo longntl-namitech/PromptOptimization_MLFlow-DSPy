@@ -2,12 +2,11 @@ import json
 import pandas as pd
 import random
 from dspy import Example
-from setup import CONFIG
-
-print("📂 Loading and preparing dataset...")
+from config import CONFIG
 
 
 def load_and_prepare_data():
+    """Return (train_set, eval_set) for the configured category."""
     print(f"🔍 Filtering dataset from {CONFIG['DATA_PATH']}")
     with open(CONFIG["DATA_PATH"], "r") as f:
         raw_data = json.load(f)
@@ -34,19 +33,9 @@ def load_and_prepare_data():
     return train_set, eval_set
 
 
-train_set, eval_set = load_and_prepare_data()
-
-print("=" * 60)
-print()
-
-print("📖 Preparing scope descriptions from Excel...")
-
-business_filter_file_path = "data/business_filter.xlsx"
-
-
 def get_scope_description(business_name):
-    """Get scope description for a specific business."""
-    df = pd.read_excel(business_filter_file_path, sheet_name=business_name)
+    """Return (categories, inscope, outscope) for a specific business."""
+    df = pd.read_excel(CONFIG["SCOPE_PATH"], sheet_name=business_name)
     df = df[[
         "category",
         "intent",
@@ -85,13 +74,3 @@ def get_scope_description(business_name):
     )
 
     return category, f"<Inscope>\n{inscope}\n</Inscope>", f"<Outscope>\n{outscope}\n</Outscope>"
-
-
-category, inscope, outscope = get_scope_description(CONFIG["CATEGORY"].lower())
-
-print("✅ Scope descriptions prepared:")
-print(f"Categories: {category}")
-print(f"Inscope: {inscope}")
-print(f"Outscope: {outscope}")
-print("=" * 60)
-print()

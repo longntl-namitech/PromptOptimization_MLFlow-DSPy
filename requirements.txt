@@ -1,22 +1,16 @@
-# Core MLflow for prompt registry and experiment tracking
+# Prompt registry and experiment tracking
 mlflow>=3.0.0
 
-# OpenAI API client
+# LLM client and prompt optimization (GEPA needs dspy>=3)
 openai>=1.0.0
+dspy>=3.0.0
 
-# Data manipulation
+# Dataset and scope descriptions (.xlsx needs openpyxl)
 pandas>=2.0.0
-numpy>=1.24.0
+openpyxl
 
 # Environment variables (.env file support)
 python-dotenv>=1.0.0
 
-# Progress bars for evaluation loops
-tqdm>=4.66.0
-
-# For automated prompt optimization (optional but recommended)
-dspy-ai>=2.4.0
-
-seaborn
-
-plotly
+# Logging used by the evaluation metric
+loguru
